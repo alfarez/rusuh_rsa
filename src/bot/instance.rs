@@ -1,6 +1,9 @@
 use crate::bot::sender::compress_file;
+use crate::config::jadwal::Jadwal;
+use crate::config::users::Users;
 use crate::scraper::ambil_data::{download_hapdown, download_managersa};
-use crate::scraper::proses_rsa::{edit_rsa_concurrent, parse_input};
+use crate::scraper::proses_rsa::{edit_rsa_concurrent, parse_input, validasi_input};
+use chrono::Datelike;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -8,71 +11,136 @@ use teloxide::net::Download;
 use teloxide::{prelude::*, types::InputFile};
 use tokio::sync::Mutex;
 
-// State: simpan chat_id yang sedang menunggu file .txt
 type WaitingSet = Arc<Mutex<HashSet<i64>>>;
-
-fn load_allowed_users() -> Vec<i64> {
-    let content =
-        std::fs::read_to_string("allowed_users.json").expect("allowed_users.json tidak ditemukan");
-    serde_json::from_str(&content).expect("Format JSON salah")
-}
 
 pub async fn jalankan_bot() {
     let bot = Bot::from_env();
     let waiting: WaitingSet = Arc::new(Mutex::new(HashSet::new()));
-    let allowed_user_ids: Arc<Vec<i64>> = Arc::new(load_allowed_users());
+    let users: Arc<Users> = Arc::new(Users::load());
+    let jadwal: Arc<Mutex<Jadwal>> = Arc::new(Mutex::new(Jadwal::load()));
 
     teloxide::repl(bot, move |bot: Bot, msg: Message| {
         let waiting = Arc::clone(&waiting);
-        let allowed_user_ids = Arc::clone(&allowed_user_ids);
+        let users = Arc::clone(&users);
+        let jadwal = Arc::clone(&jadwal);
+
         async move {
-            if !allowed_user_ids.contains(&msg.chat.id.0) {
+            let uid = msg.chat.id.0;
+
+            // Cek allowed
+            if !users.is_allowed(uid) {
                 let _ = bot
                     .send_message(msg.chat.id, "❌ Anda tidak diizinkan.")
                     .await;
                 return Ok(());
             }
 
-            // Handler /download
-            if msg.text() == Some("/download") {
+            let nama = users.nama(uid);
+            let teks = msg.text().unwrap_or("");
+
+            // Generate jadwal — pakai all_user_ids()
+            if teks == "/generate" && users.is_admin(uid) {
+                let now = chrono::Local::now();
+                let user_ids = users.all_user_ids();
+                let log = jadwal
+                    .lock()
+                    .await
+                    .generate(now.year(), now.month(), &user_ids, uid);
+
+                let path = PathBuf::from("jadwal_generated.txt");
+                std::fs::write(&path, &log).unwrap();
+                let _ = bot.send_document(msg.chat.id, InputFile::file(&path)).await;
+                let _ = std::fs::remove_file(&path);
+                return Ok(());
+            }
+
+            if teks == "/listjadwal" && users.is_admin(uid) {
+                let now = chrono::Local::now();
+                // Tampilkan nama bukan user_id
+                let jadwal_lock = jadwal.lock().await;
+                let prefix = format!("{}-{:02}", now.year(), now.month());
+                let mut entries: Vec<_> = jadwal_lock.data
+                    .iter()
+                    .filter(|(k, _)| k.starts_with(&prefix))
+                    .collect();
+                entries.sort_by_key(|(k, _)| k.to_string());
+
+                let isi = entries
+                    .iter()
+                    .map(|(tgl, uid)| {
+                        let nama = users.nama(**uid);
+                        format!("{}: {}", tgl, nama)
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+
+                let _ = bot.send_message(msg.chat.id, isi).await;
+                return Ok(());
+            }
+
+            if teks == "/jadwal" {
+                let now = chrono::Local::now();
+                let isi = jadwal.lock().await.jadwal_user(uid, now.year(), now.month());
+                let _ = bot
+                    .send_message(
+                        msg.chat.id,
+                        format!("📅 Jadwal {} bulan ini:\n{}", nama, isi),
+                    )
+                    .await;
+                return Ok(());
+            }
+
+            if teks == "/download" || teks == "/rsa" {
+                let boleh = jadwal.lock().await.boleh_akses(uid);
+                if !boleh {
+                    let now = chrono::Local::now();
+                    let jadwal_user = jadwal.lock().await.jadwal_user(uid, now.year(), now.month());
+                    let _ = bot
+                        .send_message(
+                            msg.chat.id,
+                            format!("⏰ Bukan jadwal kamu {}.\n📅 Jadwalmu:\n{}", nama, jadwal_user),
+                        )
+                        .await;
+                    return Ok(());
+                }
+            }
+
+            // ... sisa handler /download, /rsa, file .txt sama seperti sebelumnya
+            if teks == "/download" {
                 handle_download(&bot, &msg).await?;
                 return Ok(());
             }
 
-            // Handler /rsa — minta file
-            if msg.text() == Some("/rsa") {
+            if teks == "/rsa" {
                 let _ = bot
                     .send_message(
                         msg.chat.id,
                         "📎 Silakan kirim file .txt berisi data RSA.\nFormat per baris:\nwitel;lc;dp;po",
                     )
                     .await;
-                waiting.lock().await.insert(msg.chat.id.0);
+                waiting.lock().await.insert(uid);
                 return Ok(());
             }
 
-            // Handler file .txt (jika sedang menunggu)
             if let Some(doc) = msg.document() {
-                let sedang_tunggu = waiting.lock().await.contains(&msg.chat.id.0);
+                let sedang_tunggu = waiting.lock().await.contains(&uid);
                 if !sedang_tunggu {
                     return Ok(());
                 }
 
-                // Validasi ekstensi
-                let nama = doc.file_name.clone().unwrap_or_default();
-                if !nama.ends_with(".txt") {
+                let nama_file = doc.file_name.clone().unwrap_or_default();
+                if !nama_file.ends_with(".txt") {
                     let _ = bot
                         .send_message(msg.chat.id, "❌ File harus berformat .txt")
                         .await;
                     return Ok(());
                 }
 
-                // Download file dari Telegram
                 let file = bot.get_file(doc.file.id.clone()).await?;
                 let mut buf = Vec::new();
                 bot.download_file(&file.path, &mut buf).await?;
 
-                let teks = match String::from_utf8(buf) {
+                let teks_file = match String::from_utf8(buf) {
                     Ok(t) => t,
                     Err(_) => {
                         let _ = bot
@@ -82,8 +150,8 @@ pub async fn jalankan_bot() {
                     }
                 };
 
-                // Parse dan validasi
-                let data_list = parse_input(&teks);
+                // setelah parse_input
+                let data_list = parse_input(&teks_file);
                 if data_list.is_empty() {
                     let _ = bot
                         .send_message(
@@ -94,19 +162,34 @@ pub async fn jalankan_bot() {
                     return Ok(());
                 }
 
-                // Hapus dari waiting
-                waiting.lock().await.remove(&msg.chat.id.0);
+                // Validasi sebelum kirim ke server
+                let errors = validasi_input(&data_list);
+                if !errors.is_empty() {
+                    let pesan_error = errors
+                        .iter()
+                        .map(|e| format!("Baris {}: {} → {}", e.baris, e.data, e.alasan))
+                        .collect::<Vec<_>>()
+                        .join("\n");
+
+                    let _ = bot
+                        .send_message(
+                            msg.chat.id,
+                            format!("❌ Data tidak valid, perbaiki dulu:\n\n{}", pesan_error),
+                        )
+                        .await;
+                    return Ok(());
+                }
+
+                waiting.lock().await.remove(&uid);
 
                 let _ = bot
                     .send_message(
                         msg.chat.id,
-                        format!("Memproses {} baris RSA...", data_list.len()),
+                        format!("⚙️ Memproses {} baris RSA...", data_list.len()),
                     )
                     .await;
 
-                // Proses concurrent
                 let (hasil, log_path) = edit_rsa_concurrent(data_list).await;
-
                 let sukses = hasil.iter().filter(|(_, ok, _)| *ok).count();
                 let gagal = hasil.len() - sukses;
 
@@ -117,11 +200,7 @@ pub async fn jalankan_bot() {
                     )
                     .await;
 
-                // Kirim file debug
-                let _ = bot
-                .send_document(msg.chat.id, InputFile::file(&log_path)).await;
-
-                //Hapus file dan folder log setelah dikirim
+                let _ = bot.send_document(msg.chat.id, InputFile::file(&log_path)).await;
                 let _ = std::fs::remove_file(&log_path);
                 let _ = std::fs::remove_dir("logs");
             }
@@ -131,8 +210,6 @@ pub async fn jalankan_bot() {
     })
     .await;
 }
-
-// Pisah handler download biar tidak numpuk di repl
 async fn handle_download(bot: &Bot, msg: &Message) -> Result<(), teloxide::RequestError> {
     let _ = bot
         .send_message(msg.chat.id, "Mulai download file...")
@@ -142,9 +219,9 @@ async fn handle_download(bot: &Bot, msg: &Message) -> Result<(), teloxide::Reque
     let sukses = hasil_hap.is_ok() && hasil_mgr.is_ok();
 
     let pesan = match (hasil_hap, hasil_mgr) {
-        (Ok(_), Ok(_)) => "File berhasil diunduh!".to_string(),
-        (Err(e), _) => format!("History APDown error: {}", e),
-        (_, Err(e)) => format!("ManageRSA error: {}", e),
+        (Ok(_), Ok(_)) => "✅ File RSA berhasil diunduh, silakan cek file!".to_string(),
+        (Err(e), _) => format!("❌ Gagal unduh History APDown: {}", e),
+        (_, Err(e)) => format!("❌ Gagal unduh ManageRSA: {}", e),
     };
 
     let _ = bot.send_message(msg.chat.id, pesan).await;
@@ -176,7 +253,10 @@ async fn handle_download(bot: &Bot, msg: &Message) -> Result<(), teloxide::Reque
                     Ok(p) => {
                         let hasil_mb = std::fs::metadata(&p).unwrap().len() / 1_000_000;
                         let _ = bot
-                            .send_message(msg.chat.id, format!("{} MB → {} MB", size_mb, hasil_mb))
+                            .send_message(
+                                msg.chat.id,
+                                format!("🗜 {} MB → {} MB", size_mb, hasil_mb),
+                            )
                             .await;
                         p
                     }
@@ -216,7 +296,6 @@ async fn handle_download(bot: &Bot, msg: &Message) -> Result<(), teloxide::Reque
             .edit_message_text(msg.chat.id, progress_id, "✅ Semua file terkirim!")
             .await;
 
-        // Bersihkan folder
         for file in std::fs::read_dir("PRABAK_CACHE").unwrap().flatten() {
             let _ = std::fs::remove_file(file.path());
         }

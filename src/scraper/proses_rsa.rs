@@ -8,11 +8,62 @@ const DEFAULT_SEMAPHORE: usize = 10;
 
 pub type RsaRow = (String, String, String, String); // witel, lc, dp, po
 pub type RsaResult = (usize, bool, String);
+pub struct ValidasiError {
+    pub baris: usize,
+    pub data: String,
+    pub alasan: String,
+}
 
 #[derive(Deserialize)]
 struct RsaResponse {
     message: Option<String>,
     transaction: Option<bool>,
+}
+
+pub fn validasi_input(data_list: &[RsaRow]) -> Vec<ValidasiError> {
+    let mut errors = Vec::new();
+
+    for (idx, (witel, lc, dp, po)) in data_list.iter().enumerate() {
+        let baris = idx + 1;
+
+        if witel.is_empty() {
+            errors.push(ValidasiError {
+                baris,
+                data: format!("{};{};{};{}", witel, lc, dp, po),
+                alasan: "witel kosong".to_string(),
+            });
+        }
+        if lc.is_empty() {
+            errors.push(ValidasiError {
+                baris,
+                data: format!("{};{};{};{}", witel, lc, dp, po),
+                alasan: "lc kosong".to_string(),
+            });
+        }
+        if dp.is_empty() {
+            errors.push(ValidasiError {
+                baris,
+                data: format!("{};{};{};{}", witel, lc, dp, po),
+                alasan: "dp kosong".to_string(),
+            });
+        }
+        if po.is_empty() {
+            errors.push(ValidasiError {
+                baris,
+                data: format!("{};{};{};{}", witel, lc, dp, po),
+                alasan: "po kosong".to_string(),
+            });
+        }
+        if po.parse::<i64>().is_err() {
+            errors.push(ValidasiError {
+                baris,
+                data: format!("{};{};{};{}", witel, lc, dp, po),
+                alasan: format!("po '{}' bukan angka", po),
+            });
+        }
+    }
+
+    errors
 }
 
 async fn edit_rsa_bulk(
