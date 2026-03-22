@@ -97,7 +97,7 @@ async fn download_file(
         if !folder_path.exists() {
             std::fs::create_dir_all(folder_path)?;
         }
-        std::fs::write(folder_path.join(&nama_file.trim()), &bytes)?;
+        std::fs::write(folder_path.join(nama_file.trim()), &bytes)?;
         println!(
             "File berhasil di download: {}, dalam waktu {:.2?} detik",
             nama_file,

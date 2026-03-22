@@ -43,7 +43,7 @@ impl Jadwal {
         // Buat pool: setiap user muncul hari_per_user kali
         let mut pool: Vec<i64> = user_ids
             .iter()
-            .flat_map(|&uid| std::iter::repeat(uid).take(hari_per_user))
+            .flat_map(|&uid| std::iter::repeat_n(uid, hari_per_user))
             .collect();
 
         // Sisa hari → admin

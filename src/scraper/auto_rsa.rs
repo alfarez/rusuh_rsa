@@ -235,7 +235,7 @@ fn gabung_dan_bersihkan(
         .map(|opt| opt.map(|s| !s.trim().is_empty()))
         .collect();
 
-    Ok(df_merge.filter(&non_empty_mask)?)
+    df_merge.filter(&non_empty_mask)
 }
 
 //  Hitung status AP ─
