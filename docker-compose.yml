@@ -10,7 +10,7 @@ services:
       - .env
 
     volumes:
-      - ./users.json:/app/users.json:ro
-      - ./jadwal.json:/app/jadwal.json:ro
+      - ./users.json:/app/users.json
+      - ./jadwal.json:/app/jadwal.json
 
     restart: unless-stopped

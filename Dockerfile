@@ -1,25 +1,24 @@
 FROM rust:alpine AS builder
 WORKDIR /app
 
-RUN apk add --no-cache musl-dev pkgconfig openssl-dev openssl-libs-static ca-certificates
+RUN apk add --no-cache \
+    musl-dev pkgconf openssl-dev openssl-libs-static \
+    && rm -rf /var/cache/apk/*
 
 ENV CARGO_BUILD_JOBS=1
-ENV RUSTFLAGS="-C codegen-units=1"
+ENV OPENSSL_STATIC=1
 
 COPY Cargo.toml Cargo.lock ./
 RUN mkdir src && echo 'fn main() {}' > src/main.rs
-RUN nice -n 19 cargo build --release --locked
+RUN nice -n 19 cargo build --locked
 
 COPY src ./src
-RUN nice -n 19 cargo build --release --locked \
-    && strip target/release/rsa
+RUN touch src/main.rs \
+    && nice -n 19 cargo build --locked
 
-FROM alpine:3.21
+FROM alpine:latest
 WORKDIR /app
-
-RUN apk add --no-cache ca-certificates tzdata libssl3 libgcc libstdc++
-
-COPY --from=builder /app/target/release/rsa /usr/local/bin/rsa
-
+RUN apk add --no-cache ca-certificates tzdata
+COPY --from=builder /app/target/debug/rsa /usr/local/bin/rsa
 ENV TZ=Asia/Singapore
 ENTRYPOINT ["/usr/local/bin/rsa"]

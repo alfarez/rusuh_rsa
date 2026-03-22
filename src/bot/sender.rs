@@ -13,8 +13,8 @@ pub fn compress_file(input: &Path) -> Result<PathBuf, Box<dyn std::error::Error 
     let mut input_file = File::open(input)?;
     let output_file = File::create(&output_path)?;
     let mut encoder = GzEncoder::new(output_file, Compression::new(9));
-
     let mut buffer = [0u8; 65536];
+
     loop {
         let n = input_file.read(&mut buffer)?;
         if n == 0 {
@@ -24,6 +24,5 @@ pub fn compress_file(input: &Path) -> Result<PathBuf, Box<dyn std::error::Error 
     }
 
     encoder.finish()?;
-
     Ok(output_path)
 }

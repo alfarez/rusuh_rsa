@@ -1,16 +1,5 @@
-.git
-.gitignore
-.github
 .vscode
-
 target
-
 .env
-.env.*
-*.pem
-*.key
-
-users.json
-jadwal.json
-logs/
+*.json
 PRABAK_CACHE/

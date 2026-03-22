@@ -198,7 +198,7 @@ Sumber jadwal diambil dari `jadwal.json` format per-bulan (`YYYY-MM`) dengan key
 - Jika user tidak ada di `users.json`, bot balas: tidak diizinkan.
 - `/download` dan `/rsa` ditolak jika bukan admin dan bukan jadwal user di hari ini.
 - `format_periode()` di download data:
-  - sebelum jam 06:00 memakai tanggal hari ini,
+  - sebelum jam 06:00 memakai tanggal kemarin,
   - setelah itu memakai tanggal kemarin.
 - Timeout total proses AutoRSA adalah 600 detik.
 
