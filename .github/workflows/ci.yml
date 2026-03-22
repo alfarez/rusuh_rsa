@@ -30,7 +30,7 @@ jobs:
 
       - name: Install Alpine system dependencies
         run: |
-          apk add --no-cache alpine-sdk openssl-dev pkgconf ca-certificates
+          apk add --no-cache alpine-sdk openssl-dev openssl-libs-static pkgconf ca-certificates
 
       - name: Install rustfmt and clippy
         run: rustup component add rustfmt clippy
