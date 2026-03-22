@@ -1,0 +1,14 @@
+services:
+  app:
+    image: ${RSA_IMAGE:-ghcr.io/alfarez/rusuh_rsa:latest}
+    pull_policy: always
+    container_name: rsa-app
+
+    env_file:
+      - .env
+
+    volumes:
+      - ./users.json:/app/users.json:ro
+      - ./jadwal.json:/app/jadwal.json:ro
+
+    restart: unless-stopped
