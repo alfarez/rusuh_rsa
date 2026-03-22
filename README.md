@@ -94,8 +94,10 @@ Contoh isi setelah generate:
 
 ```json
 {
-  "2026-03-22": 987654321,
-  "2026-03-23": 123456789
+  "2026-03": {
+    "2026-03-22": "Nama Agent",
+    "2026-03-23": "Nama Admin"
+  }
 }
 ```
 
@@ -189,7 +191,7 @@ Bot menjalankan dua scheduler, cek tiap 30 detik, trigger saat jam lokal server 
 - Scheduler 1: jika petugas hari itu admin, bot otomatis jalankan AutoRSA ke admin tersebut.
 - Scheduler 2: jika petugas hari itu bukan admin (agent), bot otomatis download dan kirim file ke agent tersebut.
 
-Sumber jadwal diambil dari `jadwal.json` dengan key tanggal format `YYYY-MM-DD`.
+Sumber jadwal diambil dari `jadwal.json` format per-bulan (`YYYY-MM`) dengan key tanggal `YYYY-MM-DD` di dalamnya.
 
 ## Catatan Perilaku Penting
 

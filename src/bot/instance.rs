@@ -338,7 +338,7 @@ async fn scheduler_autorsa_admin_harian(bot: Bot, users: Arc<Users>, jadwal: Arc
 
         let petugas_hari_ini = {
             let j = jadwal.lock().await;
-            j.data.get(&hari_ini).copied()
+            j.petugas_di_tanggal(&hari_ini)
         };
 
         let Some(user_id_petugas) = petugas_hari_ini else {
@@ -393,7 +393,7 @@ async fn scheduler_download_agent_harian(bot: Bot, users: Arc<Users>, jadwal: Ar
 
         let petugas_hari_ini = {
             let j = jadwal.lock().await;
-            j.data.get(&hari_ini).copied()
+            j.petugas_di_tanggal(&hari_ini)
         };
 
         let Some(user_id_petugas) = petugas_hari_ini else {
@@ -443,7 +443,7 @@ async fn jalankan_tes_scheduler_1_menit(
     let hari_ini = chrono::Local::now().format("%Y-%m-%d").to_string();
     let petugas_hari_ini = {
         let j = jadwal.lock().await;
-        j.data.get(&hari_ini).copied()
+        j.petugas_di_tanggal(&hari_ini)
     };
 
     let Some(user_id_petugas) = petugas_hari_ini else {
@@ -539,7 +539,7 @@ pub async fn jalankan_bot() {
     let bot = Bot::from_env();
     let waiting: WaitingSet = Arc::new(Mutex::new(HashSet::new()));
     let users: Arc<Users> = Arc::new(Users::load());
-    let jadwal: Arc<Mutex<Jadwal>> = Arc::new(Mutex::new(Jadwal::load()));
+    let jadwal: Arc<Mutex<Jadwal>> = Arc::new(Mutex::new(Jadwal::load(users.as_ref())));
 
     let bot_scheduler = bot.clone();
     let users_scheduler = Arc::clone(&users);
@@ -586,7 +586,7 @@ pub async fn jalankan_bot() {
                 let log = jadwal
                     .lock()
                     .await
-                    .generate(now.year(), now.month(), &user_ids, uid);
+                    .generate(now.year(), now.month(), &user_ids, uid, users.as_ref());
 
                 let path = PathBuf::from("jadwal_generated.txt");
                 std::fs::write(&path, &log).unwrap();
@@ -651,19 +651,13 @@ pub async fn jalankan_bot() {
 
             if teks == "/listjadwal" && users.is_admin(uid) {
                 let now = chrono::Local::now();
-                // Tampilkan nama bukan user_id
                 let jadwal_lock = jadwal.lock().await;
-                let prefix = format!("{}-{:02}", now.year(), now.month());
-                let mut entries: Vec<_> = jadwal_lock.data
-                    .iter()
-                    .filter(|(k, _)| k.starts_with(&prefix))
-                    .collect();
-                entries.sort_by_key(|(k, _)| k.to_string());
+                let entries = jadwal_lock.entri_bulan(now.year(), now.month());
 
                 let isi = entries
                     .iter()
                     .map(|(tgl, uid)| {
-                        let nama = users.nama(**uid);
+                        let nama = users.nama(*uid);
                         format!("{}: {}", tgl, nama)
                     })
                     .collect::<Vec<_>>()
