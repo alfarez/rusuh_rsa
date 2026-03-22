@@ -4,11 +4,14 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-chrono = "0.4.44"
+calamine = "0.34.0"
+chrono = "0.4.38"
 flate2 = "1.1.9"
+polars = { version = "0.53.0", features = ["lazy", "strings", "regex", "concat_str"] }
 rand = "0.10.0"
 reqwest = { version = "0.12", features = ["stream"] }
 serde = "1.0.228"
 serde_json = "1.0.149"
+scraper = "0.24.0"
 teloxide = { version = "0.17", features = ["macros"] }
 tokio = { version = "1.50.0", features = ["full"] }

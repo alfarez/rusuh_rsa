@@ -56,7 +56,31 @@ async fn download_file(
             .unwrap_or_else(|| "file_unduhan".to_string());
 
         // Download file
+        let content_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+
         let bytes = response.bytes().await?;
+
+        // Beberapa endpoint mengekspor .xls dalam bentuk HTML table.
+        let is_html_body = bytes.starts_with(b"<!DOCTYPE html")
+            || bytes.starts_with(b"<html")
+            || bytes.starts_with(b"<HTML")
+            || bytes.starts_with(b"<table")
+            || bytes.starts_with(b"<TABLE");
+        let looks_like_table = bytes.windows(6).any(|w| w.eq_ignore_ascii_case(b"<table"));
+        if (content_type.contains("text/html") || is_html_body) && !looks_like_table {
+            let preview =
+                String::from_utf8_lossy(&bytes[..bytes.len().min(200)]).replace('\n', " ");
+            return Err(format!(
+                "Server mengembalikan HTML, bukan file Excel. content-type='{}', preview='{}'",
+                content_type, preview
+            )
+            .into());
+        }
 
         // jika ukuran file kurang dari 1MB maka anggap sebagai file gagal diunduh
         if bytes.len() < 1_000_000 {
