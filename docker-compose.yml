@@ -1,7 +1,9 @@
 services:
   app:
-    image: ${RSA_IMAGE:-ghcr.io/alfarez/rusuh_rsa:latest}
-    pull_policy: always
+    image: ${RSA_IMAGE:-rsa-app:local}
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: rsa-app
 
     env_file:

@@ -116,7 +116,13 @@ cargo run --release
 
 ### Opsi B: Docker
 
-Build image:
+Build dan jalan dengan Docker Compose (lokal):
+
+```bash
+docker compose up --build
+```
+
+Atau manual build image:
 
 ```bash
 docker build -t rsa-bot .
@@ -132,6 +138,10 @@ docker run -d \
   -v $(pwd)/jadwal.json:/app/jadwal.json \
   rsa-bot
 ```
+
+  ## CI (GitHub Actions)
+
+  Workflow CI dipakai untuk validasi saja (fmt, clippy, check, test), bukan untuk build/push image. Build produksi dijalankan lokal lewat Docker/Docker Compose.
 
 ## Alur Kerja Fitur
 
