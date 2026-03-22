@@ -10,13 +10,14 @@ fn url_rsa() -> String {
 
 fn format_periode() -> String {
     // Format YMD
-    // Jika waktu sekarang adalah 20240625 dan sebelum jam 06:00 pada tanggal 20240626, maka ambil periode 20240625
+    // Jika waktu sekarang adalah 20240625 dan sebelum jam 06:00 pada tanggal 20240626
+    // maka ambil periode 20240625
     if chrono::Local::now().hour() < 6 {
-        chrono::Local::now().format("%Y%m%d").to_string()
-    } else {
         (chrono::Local::now() - chrono::Duration::days(1))
             .format("%Y%m%d")
-            .to_string()
+            .to_string() // contoh output: "20240625"
+    } else {
+        chrono::Local::now().format("%Y%m%d").to_string() // contoh output: "20240626"
     }
 }
 

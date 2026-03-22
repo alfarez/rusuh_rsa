@@ -15,15 +15,13 @@ impl Jadwal {
     pub fn load(users: &Users) -> Self {
         let content = std::fs::read_to_string("jadwal.json").unwrap_or_else(|_| "{}".to_string());
 
-        // Backward compatible:
-        // 1) format lama flat: {"YYYY-MM-DD": 123}
-        // 2) format baru per-bulan: {"YYYY-MM": {"YYYY-MM-DD": "Nama"}}
+        // format baru per-bulan: {"YYYY-MM": {"YYYY-MM-DD": "Nama"}}
         if let Ok(data_flat) = serde_json::from_str::<HashMap<String, i64>>(&content) {
             return Self { data: data_flat };
         }
 
-        let monthly = serde_json::from_str::<HashMap<String, HashMap<String, String>>>(&content)
-            .unwrap_or_default();
+        let monthly =
+            serde_json::from_str::<HashMap<String, HashMap<String, String>>>(&content).unwrap();
 
         let nama_to_uid: HashMap<String, i64> = users
             .users

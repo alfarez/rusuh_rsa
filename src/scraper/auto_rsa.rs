@@ -2,6 +2,7 @@ use crate::config::heade::header;
 use calamine::{Reader, open_workbook_auto};
 use polars::prelude::*;
 use scraper::{Html, Selector};
+use serde::Deserialize;
 use std::ops::Not;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -11,6 +12,26 @@ const CONCURRENT_POST_LIMIT: usize = 10;
 const SUCCESS_MESSAGE: &str = "Data Berhasil di update..";
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
+
+#[derive(Deserialize)]
+struct RsaResponse {
+    message: Option<String>,
+    transaction: Option<bool>,
+}
+
+fn pilih_kolom_ap(df_rsa: &DataFrame) -> Result<String, PolarsError> {
+    let names = df_rsa.get_column_names();
+    if names.iter().any(|n| n.as_str() == "AP_NAME") {
+        return Ok("AP_NAME".to_string());
+    }
+    if names.iter().any(|n| n.as_str() == "MAC_ADDRESS") {
+        return Ok("MAC_ADDRESS".to_string());
+    }
+
+    Err(PolarsError::ComputeError(
+        "Kolom AP_NAME/MAC_ADDRESS tidak ditemukan".into(),
+    ))
+}
 
 fn html_table_to_dataframe(bytes: &[u8], path: &str) -> Result<DataFrame, BoxError> {
     let html = String::from_utf8_lossy(bytes);
@@ -185,11 +206,13 @@ fn gabung_dan_bersihkan(
     df_manage: &DataFrame,
     jam_cols: &[String],
 ) -> Result<DataFrame, PolarsError> {
+    let ap_col = pilih_kolom_ap(df_rsa)?;
+
     let mut rsa_cols = vec![
         "LOC_ID".to_string(),
         "WITEL".to_string(),
         "TOTAL_JAM_MATI".to_string(),
-        "MAC_ADDRESS".to_string(),
+        ap_col.clone(),
     ];
     rsa_cols.extend_from_slice(jam_cols);
 
@@ -204,10 +227,10 @@ fn gabung_dan_bersihkan(
         None,
     )?;
 
-    // Samakan perilaku dengan Python: drop_duplicates(subset="MAC_ADDRESS").
+    // Samakan perilaku dengan Python: drop_duplicates(subset="AP_NAME").
     let df_merge = df_merge
         .lazy()
-        .unique_stable(Some(cols(["MAC_ADDRESS"])), UniqueKeepStrategy::First)
+        .unique_stable(Some(cols([ap_col.as_str()])), UniqueKeepStrategy::First)
         .with_column(
             col("MINIMUM_AP")
                 .cast(polars::datatypes::DataType::Int64)
@@ -339,13 +362,8 @@ fn bangun_data_akhir(
                 .cast(polars::datatypes::DataType::String)
                 .neq(lit("")),
         )
-        .group_by([col("LOC_ID")])
-        .agg([
-            col("WITEL").first().alias("WITEL"),
-            col("RSA").first().alias("RSA"),
-            col("JUMLAH").first().alias("JUMLAH"),
-        ])
         .select([col("WITEL"), col("LOC_ID"), col("RSA"), col("JUMLAH")])
+        .unique_stable(Some(cols(["LOC_ID"])), UniqueKeepStrategy::First)
         .collect()?;
     println!(
         "[AutoRSA] Kandidat akhir unik LOC_ID: {}",
@@ -406,8 +424,17 @@ async fn kirim_semua_rsa(data_list: Vec<(String, String, String, String)>) -> (u
                     req = req.header(k.as_str(), v.as_str());
                 }
                 match req.form(&params).send().await {
-                    Ok(resp) => resp.text().await.unwrap_or_default(),
-                    Err(e) => e.to_string(),
+                    Ok(resp) => {
+                        let text = resp.text().await.unwrap_or_default();
+                        let sukses = serde_json::from_str::<RsaResponse>(&text)
+                            .map(|body| {
+                                body.message.as_deref() == Some(SUCCESS_MESSAGE)
+                                    && body.transaction == Some(true)
+                            })
+                            .unwrap_or(false);
+                        (sukses, text)
+                    }
+                    Err(e) => (false, e.to_string()),
                 }
             })
         })
@@ -417,7 +444,7 @@ async fn kirim_semua_rsa(data_list: Vec<(String, String, String, String)>) -> (u
     let mut gagal = 0;
     for (i, task) in tasks.into_iter().enumerate() {
         match task.await {
-            Ok(text) if text.contains(SUCCESS_MESSAGE) => sukses += 1,
+            Ok((true, _)) => sukses += 1,
             _ => gagal += 1,
         }
 
@@ -431,6 +458,95 @@ async fn kirim_semua_rsa(data_list: Vec<(String, String, String, String)>) -> (u
     }
 
     (sukses, gagal, start.elapsed().as_secs_f64())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use polars::df;
+
+    #[test]
+    fn hitung_jam_mati_memakai_kolom_valid_saja() -> Result<(), PolarsError> {
+        let mut df = df!(
+            "LOC_ID" => ["LOC1", "LOC2"],
+            "WITEL" => ["W1", "W2"],
+            "AP_NAME" => ["AP1", "AP2"],
+            "J01" => ["1", "0"],
+            "J02" => ["4", "0"],
+            "J03" => ["9", "9"]
+        )?;
+
+        let jam_cols = hitung_jam_mati(&mut df)?;
+        assert_eq!(jam_cols, vec!["J01".to_string(), "J02".to_string()]);
+
+        let total_col = df
+            .column("TOTAL_JAM_MATI")?
+            .cast(&polars::datatypes::DataType::Float64)?;
+        let total = total_col.f64()?;
+        assert_eq!(total.get(0), Some(2.5));
+        assert_eq!(total.get(1), Some(0.0));
+
+        Ok(())
+    }
+
+    #[test]
+    fn gabung_bersih_dedup_memprioritaskan_ap_name() -> Result<(), PolarsError> {
+        let mut df_rsa = df!(
+            "LOC_ID" => ["LOC1", "LOC1", "LOC_2"],
+            "WITEL" => ["W1", "W1", "W2"],
+            "AP_NAME" => ["AP-SAMA", "AP-SAMA", "AP-3"],
+            "MAC_ADDRESS" => ["MAC-1", "MAC-2", "MAC-3"],
+            "J01" => ["4", "0", "4"]
+        )?;
+        let jam_cols = hitung_jam_mati(&mut df_rsa)?;
+
+        let df_manage = df!(
+            "LOC_ID" => ["LOC1", "LOC_2"],
+            "RSA_TYPE" => ["Normal", "Normal"],
+            "MINIMUM_AP" => ["0", "0"]
+        )?;
+
+        let merged = gabung_dan_bersihkan(&df_rsa, &df_manage, &jam_cols)?;
+
+        // AP_NAME sama harus dedup jadi 1 baris, LOC_ID bertanda '_' harus terbuang.
+        assert_eq!(merged.height(), 1);
+        assert_eq!(merged.column("LOC_ID")?.str()?.get(0), Some("LOC1"));
+        Ok(())
+    }
+
+    #[test]
+    fn status_autorsa_sama_dengan_rule_python() -> Result<(), PolarsError> {
+        let df_merge = df!(
+            "LOC_ID" => ["L1", "L1", "L2", "L3"],
+            "WITEL" => ["W1", "W1", "W2", "W3"],
+            "TOTAL_JAM_MATI" => [4.0_f64, 0.0, 4.0, 4.0],
+            "RSA_TYPE" => ["Normal", "Normal", "Ocassionally", "Normal"],
+            "MINIMUM_AP" => [0_i64, 0, 0, 0]
+        )?;
+
+        let stats = hitung_status_ap(&df_merge)?;
+        let akhir = bangun_data_akhir(&df_merge, &stats)?;
+
+        // L1 => Partially On (2 AP total, 1 mati, JUMLAH=1)
+        // L2 => dikecualikan karena RSA_TYPE == Ocassionally
+        // L3 => Ocassionally (JUMLAH=0 dan bukan RSA_TYPE Ocassionally)
+        assert_eq!(akhir.len(), 2);
+
+        let mut has_l1_partially = false;
+        let mut has_l3_ocass = false;
+        for row in akhir {
+            if row.1 == "L1" && row.2 == "Partially On" {
+                has_l1_partially = true;
+            }
+            if row.1 == "L3" && row.2 == "Ocassionally" {
+                has_l3_ocass = true;
+            }
+        }
+
+        assert!(has_l1_partially);
+        assert!(has_l3_ocass);
+        Ok(())
+    }
 }
 
 //  Entry point
