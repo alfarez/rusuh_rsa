@@ -9,7 +9,7 @@ chrono = "0.4.38"
 flate2 = "1.1.9"
 polars = { version = "0.53.0", features = ["lazy", "strings", "regex", "concat_str"] }
 rand = "0.10.0"
-reqwest = { version = "0.12", features = ["stream"] }
+reqwest = { version = "0.12", default-features = false, features = ["stream", "rustls-tls"] }
 serde = "1.0.228"
 serde_json = "1.0.149"
 scraper = "0.24.0"

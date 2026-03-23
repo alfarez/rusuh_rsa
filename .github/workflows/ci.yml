@@ -1,9 +1,8 @@
-name: Rust CI/CD (Alpine)
+name: Rust CI
 
 on:
   push:
-    branches:
-      - "main"
+    branches: ["main"]
   pull_request:
   workflow_dispatch:
 
@@ -11,31 +10,18 @@ permissions:
   contents: read
 
 jobs:
-  checks:
-    name: Format, Lint, Check, Test (Alpine)
+  ci:
+    name: CI (Alpine)
     runs-on: ubuntu-latest
     container: rust:alpine3.21
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
 
-      - name: Cache cargo and build output
-        uses: Swatinem/rust-cache@v2
+      - name: Install deps
+        run: apk add --no-cache alpine-sdk
 
-      - name: Install Alpine system dependencies
-        run: |
-          apk add --no-cache alpine-sdk openssl-dev openssl-libs-static pkgconf ca-certificates
-
-      - name: Install rustfmt and clippy
-        run: rustup component add rustfmt clippy
-
-      - name: Check formatting
-        run: cargo fmt --all -- --check
-
-      - name: Run clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
-        
-      - name: Run tests
-        run: cargo test --all-features --locked
-
+      - run: rustup component add rustfmt clippy
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --all-targets --all-features -- -D warnings
+      - run: cargo test --all-features --locked
