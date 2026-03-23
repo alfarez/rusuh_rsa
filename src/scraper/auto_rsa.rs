@@ -460,6 +460,92 @@ async fn kirim_semua_rsa(data_list: Vec<(String, String, String, String)>) -> (u
     (sukses, gagal, start.elapsed().as_secs_f64())
 }
 
+//  Entry point
+pub struct AutoRsaResult {
+    pub sukses: usize,
+    pub gagal: usize,
+    pub total_waktu: f64,
+    pub output_path: PathBuf,
+}
+
+pub async fn process_auto_rsa(
+    path_hapdown: &str,
+    path_managersa: &str,
+) -> Result<AutoRsaResult, BoxError> {
+    let total_start = std::time::Instant::now();
+    println!(
+        "[AutoRSA] Start. input_hap='{}', input_mgr='{}'",
+        path_hapdown, path_managersa
+    );
+
+    let path_hap = path_hapdown.to_string();
+    let path_mgr = path_managersa.to_string();
+
+    let stage_load = std::time::Instant::now();
+    let (mut df_rsa, df_manage) = tokio::task::spawn_blocking(move || {
+        let df_rsa = xls_to_dataframe(&path_hap)?;
+        let df_manage = xls_to_dataframe(&path_mgr)?;
+        Ok::<_, BoxError>((df_rsa, df_manage))
+    })
+    .await??;
+    println!(
+        "[AutoRSA] Load file selesai dalam {:.2}s",
+        stage_load.elapsed().as_secs_f64()
+    );
+
+    let stage_transform = std::time::Instant::now();
+    println!("[AutoRSA] Baris awal RSA: {}", df_rsa.height());
+    println!("[AutoRSA] Baris awal ManageRSA: {}", df_manage.height());
+    let jam_cols = hitung_jam_mati(&mut df_rsa)?;
+    println!("[AutoRSA] Kolom jam valid: {}", jam_cols.len());
+    let df_merge = gabung_dan_bersihkan(&df_rsa, &df_manage, &jam_cols)?;
+    println!(
+        "[AutoRSA] Baris setelah merge + bersih: {}",
+        df_merge.height()
+    );
+    let stats = hitung_status_ap(&df_merge)?;
+    println!("[AutoRSA] Baris stats LOC_ID: {}", stats.height());
+    let data_list = bangun_data_akhir(&df_merge, &stats)?;
+    println!(
+        "[AutoRSA] Transform selesai dalam {:.2}s, data siap kirim={} baris",
+        stage_transform.elapsed().as_secs_f64(),
+        data_list.len()
+    );
+
+    if data_list.is_empty() {
+        return Err("AutoRSA: hasil transform kosong, tidak ada data yang memenuhi kriteria Partially On/Ocassionally".into());
+    }
+
+    let tanggal = chrono::Local::now().format("%Y%m%d").to_string();
+    let output_path = PathBuf::from(format!("RSA_{}.txt", tanggal));
+    let isi: Vec<String> = data_list
+        .iter()
+        .map(|(w, l, r, j)| format!("{};{};{};{}", w, l, r, j))
+        .collect();
+    std::fs::write(&output_path, isi.join("\n"))?;
+    println!("[AutoRSA] Output disimpan: {:?}", output_path);
+
+    let stage_kirim = std::time::Instant::now();
+    let (sukses, gagal, total_waktu) = kirim_semua_rsa(data_list).await;
+    println!(
+        "[AutoRSA] Kirim selesai dalam {:.2}s | sukses={} gagal={}",
+        stage_kirim.elapsed().as_secs_f64(),
+        sukses,
+        gagal
+    );
+    println!(
+        "[AutoRSA] Total proses selesai dalam {:.2}s",
+        total_start.elapsed().as_secs_f64()
+    );
+
+    Ok(AutoRsaResult {
+        sukses,
+        gagal,
+        total_waktu,
+        output_path,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -547,90 +633,4 @@ mod tests {
         assert!(has_l3_ocass);
         Ok(())
     }
-}
-
-//  Entry point
-pub struct AutoRsaResult {
-    pub sukses: usize,
-    pub gagal: usize,
-    pub total_waktu: f64,
-    pub output_path: PathBuf,
-}
-
-pub async fn process_auto_rsa(
-    path_hapdown: &str,
-    path_managersa: &str,
-) -> Result<AutoRsaResult, BoxError> {
-    let total_start = std::time::Instant::now();
-    println!(
-        "[AutoRSA] Start. input_hap='{}', input_mgr='{}'",
-        path_hapdown, path_managersa
-    );
-
-    let path_hap = path_hapdown.to_string();
-    let path_mgr = path_managersa.to_string();
-
-    let stage_load = std::time::Instant::now();
-    let (mut df_rsa, df_manage) = tokio::task::spawn_blocking(move || {
-        let df_rsa = xls_to_dataframe(&path_hap)?;
-        let df_manage = xls_to_dataframe(&path_mgr)?;
-        Ok::<_, BoxError>((df_rsa, df_manage))
-    })
-    .await??;
-    println!(
-        "[AutoRSA] Load file selesai dalam {:.2}s",
-        stage_load.elapsed().as_secs_f64()
-    );
-
-    let stage_transform = std::time::Instant::now();
-    println!("[AutoRSA] Baris awal RSA: {}", df_rsa.height());
-    println!("[AutoRSA] Baris awal ManageRSA: {}", df_manage.height());
-    let jam_cols = hitung_jam_mati(&mut df_rsa)?;
-    println!("[AutoRSA] Kolom jam valid: {}", jam_cols.len());
-    let df_merge = gabung_dan_bersihkan(&df_rsa, &df_manage, &jam_cols)?;
-    println!(
-        "[AutoRSA] Baris setelah merge + bersih: {}",
-        df_merge.height()
-    );
-    let stats = hitung_status_ap(&df_merge)?;
-    println!("[AutoRSA] Baris stats LOC_ID: {}", stats.height());
-    let data_list = bangun_data_akhir(&df_merge, &stats)?;
-    println!(
-        "[AutoRSA] Transform selesai dalam {:.2}s, data siap kirim={} baris",
-        stage_transform.elapsed().as_secs_f64(),
-        data_list.len()
-    );
-
-    if data_list.is_empty() {
-        return Err("AutoRSA: hasil transform kosong, tidak ada data yang memenuhi kriteria Partially On/Ocassionally".into());
-    }
-
-    let tanggal = chrono::Local::now().format("%Y%m%d").to_string();
-    let output_path = PathBuf::from(format!("RSA_{}.txt", tanggal));
-    let isi: Vec<String> = data_list
-        .iter()
-        .map(|(w, l, r, j)| format!("{};{};{};{}", w, l, r, j))
-        .collect();
-    std::fs::write(&output_path, isi.join("\n"))?;
-    println!("[AutoRSA] Output disimpan: {:?}", output_path);
-
-    let stage_kirim = std::time::Instant::now();
-    let (sukses, gagal, total_waktu) = kirim_semua_rsa(data_list).await;
-    println!(
-        "[AutoRSA] Kirim selesai dalam {:.2}s | sukses={} gagal={}",
-        stage_kirim.elapsed().as_secs_f64(),
-        sukses,
-        gagal
-    );
-    println!(
-        "[AutoRSA] Total proses selesai dalam {:.2}s",
-        total_start.elapsed().as_secs_f64()
-    );
-
-    Ok(AutoRsaResult {
-        sukses,
-        gagal,
-        total_waktu,
-        output_path,
-    })
 }
